@@ -5,7 +5,8 @@ import torch.utils.data
 from torch import nn
 from torchvision import models
 
-from pytorch_quantization import nn as quant_nn
+from pytorch-quantization
+.pytorch_quantization import nn as quant_nn
 
 
 from test import evaluate

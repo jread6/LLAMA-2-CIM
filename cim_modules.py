@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 1993-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,23 +14,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""Dynamically replace the modules with quantized versions."""
+
+"""Dynamically replace the modules with cim versions."""
 
 from collections import namedtuple
 import torch
-from pytorch_quantization import nn as quant_nn
+import importlib
+quant_nn = importlib.import_module("pytorch-quantization/pytorch_quantization/nn")
+
+import cim
 
 # Definition of the named tuple that is used to store mapping of the quantized modules
 _quant_entry = namedtuple('quant_entry', 'orig_mod mod_name replace_mod')
 
 # Global member of the file that contains the mapping of quantized modules
-_DEFAULT_QUANT_MAP = [_quant_entry(torch.nn, "Conv1d", quant_nn.QuantConv1d),
-                      _quant_entry(torch.nn, "Conv2d", quant_nn.QuantConv2d),
-                      _quant_entry(torch.nn, "Conv3d", quant_nn.QuantConv3d),
+_DEFAULT_QUANT_MAP = [_quant_entry(torch.nn, "Conv1d", cim.Conv1d),
+                      _quant_entry(torch.nn, "Conv2d", cim.Conv2d),
+                      _quant_entry(torch.nn, "Conv3d", cim.Conv3d),
                       _quant_entry(torch.nn, "ConvTranspose1d", quant_nn.QuantConvTranspose1d),
                       _quant_entry(torch.nn, "ConvTranspose2d", quant_nn.QuantConvTranspose2d),
                       _quant_entry(torch.nn, "ConvTranspose3d", quant_nn.QuantConvTranspose3d),
-                      _quant_entry(torch.nn, "Linear", quant_nn.QuantLinear),
+                      _quant_entry(torch.nn, "Linear", cim.Linear),
                       _quant_entry(torch.nn, "LSTM", quant_nn.QuantLSTM),
                       _quant_entry(torch.nn, "LSTMCell", quant_nn.QuantLSTMCell),
                       _quant_entry(torch.nn, "AvgPool1d", quant_nn.QuantAvgPool1d),

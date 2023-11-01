@@ -6,7 +6,8 @@ from .cim_mapping import print_network_info
 def cim_conv2d(cim_args, quant_input, scale_input, quant_weight, scale_weight, 
                bias=None, stride=(1,1), padding=(0,0), dilation=(1,1), groups=1):
     """
-    Performs 2D convolution by converting it into a matrix multiplication where each column of the weight matrix represents a filter.
+    Performs a convolution with compute-in-memory by converting the weights into a 
+    memory array where each column of the array corresponds to a filter.
 
     Arguments:
         input (torch.Tensor): Input tensor of shape (N, C_in, H_in, W_in).

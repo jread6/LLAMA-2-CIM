@@ -5,7 +5,10 @@ from .cim_mapping import print_network_info
 
 def cim_linear(cim_args, quant_input, scale_input, quant_weight, scale_weight, bias=None):
     """
-    Performs a matrix multiplication followed by the addition of a bias vector.
+    Performs a linear transformation with compute-in-memory by programming the weights into a 
+    memory array, converting the inputs to voltages and solving the resulting circuit for the 
+    analog 1D VMM outputs. Analog about are converted to digital with a simulated ADC. 
+    Digital VMM outputs are then compiled into the final 2D output tensor. 
 
     Arguments:
         input (torch.Tensor): Input tensor of shape (N, C_in).
