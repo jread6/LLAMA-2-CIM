@@ -25,9 +25,12 @@ def example():
     device = 'cuda'    
     model_name = 'ResNet18'
     LRS=1000
+    state_1=2000
+    state_2=4000
     HRS=1000000 #on/off = 1000
 
-    mem_values=torch.tensor([HRS, LRS], device='cuda') # set memory state values
+    mem_values=torch.tensor([HRS, state_2, state_1, LRS], device='cuda') # set memory state values
+    res_std = torch.tensor([1000, 400, 200, 100], device='cuda')
 
     batch_size = 100    # batch size
     num_iter = 5        # number of batches to run inference on
@@ -42,7 +45,7 @@ def example():
     # set cim arguments
     cim_args = CIMArgs(inference=True, adc_precision=adc_precision, 
                     open_rows=open_rows, batch_size=batch_size,
-                    mem_values=mem_values, conversion_type=I2V,
+                    mem_values=mem_values, resistance_std=res_std, conversion_type=I2V,
                     debug=debug, model_name=model_name,
                     calc_BER=False, device=device)
 
