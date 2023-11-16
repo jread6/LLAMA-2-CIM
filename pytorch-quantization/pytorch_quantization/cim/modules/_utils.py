@@ -22,18 +22,21 @@ import inspect
 
 from absl import logging
 
+import torch
 from torch import nn
+import math
 
 from pytorch_quantization.nn import TensorQuantizer
 from pytorch_quantization.tensor_quant import QuantDescriptor, QUANT_DESC_8BIT_PER_TENSOR
+from pytorch_quantization.cim.modules.args import CIMArgs
 
 
 class QuantMixin():
-    """Mixin class for adding basic quantization logic to quantized modules"""
+    """Mixin class for adding basic quantization logic and cim parameters to quantized modules"""
 
-    default_quant_desc_input = QUANT_DESC_8BIT_PER_TENSOR
-    default_quant_desc_weight = QUANT_DESC_8BIT_PER_TENSOR
-    cim_args = None
+    default_quant_desc_input      = QUANT_DESC_8BIT_PER_TENSOR
+    default_quant_desc_weight     = QUANT_DESC_8BIT_PER_TENSOR
+    default_quant_desc_adc        = QUANT_DESC_8BIT_PER_TENSOR
 
     @classmethod
     def set_default_quant_desc_input(cls, value):
@@ -55,14 +58,71 @@ class QuantMixin():
             raise ValueError("{} is not an instance of QuantDescriptor!")
         cls.default_quant_desc_weight = copy.deepcopy(value)
 
-    # set default output quant desc
-    
+    @classmethod
+    def set_default_quant_desc_adc(cls, value):
+        """
+        Args:
+            value: An instance of :class:`QuantDescriptor <pytorch_quantization.tensor_quant.QuantDescriptor>`
+        """
+        if not isinstance(value, QuantDescriptor):
+            raise ValueError("{} is not an instance of QuantDescriptor!")
+        cls.default_quant_desc_adc = copy.deepcopy(value)    
 
     @classmethod
-    def set_cim_args(cls, value):
-        cls.cim_args = value
+    def set_default_cim_args(cls, value):
+        """
+        Args:
+            value: An instance of :class:`CIMArgs <pytorch_quantization.cim.modules.args.CIMArgs>`
+        """
+        if not isinstance(value, CIMArgs):
+            raise ValueError("{} is not an instance of CIMArgs!")
+        cls.default_cim_args = copy.deepcopy(value)  
 
-    def init_quantizer(self, quant_desc_input, quant_desc_weight, num_layers=None):
+    def init_cim(self, cim_args):
+        if not inspect.stack()[1].function == "__init__":
+            raise TypeError("{} should be only called by __init__ of quantized module.".format(__name__))
+        
+        # NOTE: THIS DOES NOT SUPPORT MLC YET
+        # calculate voltage references
+        if cim_args.num_refs == 0:
+            num_refs = (2**cim_args.adc_precision)
+            x = torch.arange(num_refs, device=cim_args.device) + 1
+        else:
+            x = torch.arange(cim_args.num_refs, device=cim_args.device) + 1
+
+        x = x*cim_args.quant_degree # to quantize ADC, doesn't work well, suggest to keep quant_degree=1
+
+        # # subtract IR drop for this ADC block
+        # vdd = cim_args.vdd - cim_args.logic_IR_drop
+
+        vdd = cim_args.vdd
+        LRS = cim_args.mem_values[-1]
+        HRS = cim_args.mem_values[0]
+
+        r_max = 1/(x/LRS)
+        r_min = 1/((cim_args.open_rows-(x-1))/HRS + (x-1)/LRS)
+
+        if cim_args.conversion_type == 'PU':
+            print("ERROR: PU conversion type not supported yet")
+            v_max = vdd*(r_max/(cim_args.res_divider + r_max))
+            v_min = vdd*(r_min/(cim_args.res_divider + r_min))
+            exit(1)
+
+        elif cim_args.conversion_type == 'TIA':
+            cim_args.Rf = LRS/cim_args.open_rows
+            v_max = vdd*(cim_args.Rf/(r_min))
+            v_min = vdd*(cim_args.Rf/(r_max))
+
+        ###################################################################
+        # v_max = torch.cat((torch.tensor([vdd], device=cim_args.device), v_max), 0)
+
+        # cim_args.v_ref = (v_min[:-1]+v_max[1:])/2
+        cim_args.v_ref = (v_min+v_max)/2
+        ###################################################################
+
+        self._cim_args = cim_args
+
+    def init_quantizer(self, quant_desc_input, quant_desc_weight, quant_desc_adc, num_layers=None, num_adc_quantizers=None):
         """Helper function for __init__ of quantized module
 
         Create input and weight quantizer based on quant_desc passed by kwargs, or default of the class.
@@ -70,12 +130,13 @@ class QuantMixin():
         Args:
             quant_desc_input: An instance of :class:`QuantDescriptor <pytorch_quantization.tensor_quant.QuantDescriptor>`
             quant_desc_weight: An instance of :class:`QuantDescriptor <pytorch_quantization.tensor_quant.QuantDescriptor>`
+            quant_desc_adc: An instance of :class:`QuantDescriptor <pytorch_quantization.tensor_quant.QuantDescriptor>`            
             num_layers: An integer. Default None. If not None, create a list of quantizers.
         """
         if not inspect.stack()[1].function == "__init__":
             raise TypeError("{} should be only called by __init__ of quantized module.".format(__name__))
         self._fake_quant = True
-        if (not quant_desc_input.fake_quant) or (not quant_desc_weight.fake_quant):
+        if (not quant_desc_input.fake_quant) or (not quant_desc_weight.fake_quant) or (not quant_desc_adc.fake_quant):
             raise ValueError("Only fake quantization is supported!")
 
         logging.info("Input is %squantized to %d bits in %s with axis %s!", ""
@@ -84,6 +145,9 @@ class QuantMixin():
         logging.info("Weight is %squantized to %d bits in %s with axis %s!", ""
                      if not quant_desc_weight.fake_quant else "fake ",
                      quant_desc_weight.num_bits, self.__class__.__name__, quant_desc_weight.axis)
+        logging.info("Output is %squantized to %d bits in %s with axis %s!", ""
+                     if not quant_desc_adc.fake_quant else "fake ",
+                     quant_desc_adc.num_bits, self.__class__.__name__, quant_desc_adc.axis)
 
         if num_layers is None:
             self._input_quantizer = TensorQuantizer(quant_desc_input)
@@ -91,6 +155,11 @@ class QuantMixin():
         else:
             self._input_quantizers = nn.ModuleList([TensorQuantizer(quant_desc_input) for _ in range(num_layers)])
             self._weight_quantizers = nn.ModuleList([TensorQuantizer(quant_desc_weight) for _ in range(num_layers)])
+
+        if num_adc_quantizers is None:
+            self._adc_quantizer = TensorQuantizer(quant_desc_adc)
+        else:
+            self._adc_quantizers = nn.ModuleList([TensorQuantizer(quant_desc_adc) for _ in range(num_adc_quantizers)])
 
     # pylint:disable=missing-docstring
     @property
@@ -101,6 +170,10 @@ class QuantMixin():
     def weight_quantizer(self):
         return self._weight_quantizer
     # pylint:enable=missing-docstring
+
+    @property
+    def adc_quantizer(self):
+        return self._adc_quantizer
 
 
 class QuantInputMixin():
@@ -164,10 +237,14 @@ def pop_quant_desc_in_kwargs(quant_cls, input_only=False, **kwargs):
     if not input_only:
         quant_desc_weight = kwargs.pop('quant_desc_weight', quant_cls.default_quant_desc_weight)
 
+    quant_desc_adc = kwargs.pop('quant_desc_adc', quant_cls.default_quant_desc_adc)
+
+    cim_args = kwargs.pop('cim_args', quant_cls.default_cim_args)
+
     # Check if anything is left in **kwargs
     if kwargs:
         raise TypeError("Unused keys: {}".format(kwargs.keys()))
 
     if input_only:
         return quant_desc_input
-    return quant_desc_input, quant_desc_weight
+    return quant_desc_input, quant_desc_weight, quant_desc_adc, cim_args

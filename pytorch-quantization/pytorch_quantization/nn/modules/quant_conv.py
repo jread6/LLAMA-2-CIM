@@ -120,15 +120,6 @@ class QuantConv2d(_QuantConvNd):
         # the actual quantization happens in the next level of the class hierarchy
         quant_input, quant_weight = self._quant(input)
 
-        # num_bits = self.input_quantizer.num_bits
-        # unsigned = self.input_quantizer.unsigned
-        # amax = self.input_quantizer.amax
-
-        # max_bound = torch.tensor((2.0**(num_bits - 1 + int(unsigned))) - 1.0, device=quant_input.device)
-        # scale = max_bound / amax
-        # print(quant_input*scale)
-
-
         if self.padding_mode == 'circular':
             expanded_padding = ((self.padding[1] + 1) // 2, self.padding[1] // 2,
                                 (self.padding[0] + 1) // 2, self.padding[0] // 2)
@@ -138,6 +129,9 @@ class QuantConv2d(_QuantConvNd):
         else:
             output = F.conv2d(quant_input, quant_weight, self.bias, self.stride, self.padding, self.dilation,
                               self.groups)
+            
+            print(input)
+            print(output)
 
         return output
 

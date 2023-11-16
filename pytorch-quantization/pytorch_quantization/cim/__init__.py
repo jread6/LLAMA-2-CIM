@@ -17,6 +17,7 @@
 
 from pytorch_quantization.cim.modules.cim_conv import *
 from pytorch_quantization.cim.modules.cim_linear import *
+from pytorch_quantization.cim.modules.args import *
 
 from pytorch_quantization.nn.modules.tensor_quantizer import *
 from pytorch_quantization.nn.modules.quant_pooling import *

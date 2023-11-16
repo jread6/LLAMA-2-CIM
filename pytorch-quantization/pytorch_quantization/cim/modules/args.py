@@ -1,6 +1,8 @@
 import torch
 import os
 
+__all__ = ["CIMArgs"]
+
 # global CIM arguments that can be set by the user
 class CIMArgs:
     def __init__(self, inference=False, batch_size=16,
@@ -16,6 +18,7 @@ class CIMArgs:
                 calc_BER=False, dummy_column=False,
                 debug=False, Rpdn=0, hardware=False,
                 analog_shift_add=False, quant_degree=1, num_refs=0,
+                quant_mode='iw',
                 model_name='ResNet50', device='cuda'):
         """
         Initializes the CIM parameters.
@@ -67,10 +70,9 @@ class CIMArgs:
         self.hardware = hardware
         self.model_name = model_name
         self.device = device
+        self.quant_mode = quant_mode
 
         # delete NetWork_xx_.csv file
-        if os.path.exists('NetWork_'+model_name+'.csv'):
-            os.remove('NetWork_'+model_name+'.csv')
-
-
+        # if os.path.exists('NetWork_'+model_name+'.csv'):
+        #     os.remove('NetWork_'+model_name+'.csv')
 

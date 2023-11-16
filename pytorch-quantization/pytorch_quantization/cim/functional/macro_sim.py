@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import math
-from . import cim_mapping
+from . import mapping
 
 def simulate_array(args, input2d, weight2d):
 
@@ -16,7 +16,7 @@ def simulate_array(args, input2d, weight2d):
 
     # map weights to sub-arrays
     if args.map == True:
-        cim_mapping.map_weights(args, weight2d, weight2d_shape)
+        mapping.map_weights(args, weight2d, weight2d_shape)
 
     # calculate reference voltages
     calc_vref(args)
@@ -161,7 +161,7 @@ def ADC_output(args, inputs, weights):
 def convert_weights(args, weights):
 
     # convert weights to resistances and inject with noise
-    n_ary = cim_mapping.convert_to_n_ary(weights, base=len(args.mem_values), bits=args.weight_precision, device=args.device)
+    n_ary = mapping.convert_to_n_ary(weights, base=len(args.mem_values), bits=args.weight_precision, device=args.device)
 
     # save binary weights
     if args.calc_BER == True or args.debug == True:

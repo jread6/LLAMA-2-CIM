@@ -1,7 +1,7 @@
 import torch
 from torch.nn.functional import unfold
-from . import cim_sim
-from .cim_mapping import print_network_info
+from . import macro_sim
+from .mapping import print_network_info
 
 def cim_linear(cim_args, quant_input, scale_input, quant_weight, scale_weight, bias=None):
     """
@@ -53,7 +53,7 @@ def cim_linear(cim_args, quant_input, scale_input, quant_weight, scale_weight, b
     quant_input = quant_input.to(torch.int32)     # THIS PART HAS SOME LOSS
     quant_weight = quant_weight.to(torch.int32)   # THIS PART HAS SOME LOSS
 
-    output = cim_sim.simulate_array(cim_args, quant_input, quant_weight)
+    output = macro_sim.simulate_array(cim_args, quant_input, quant_weight)
 
     # compare outputs
     # diff = torch.abs(output_correct - output)

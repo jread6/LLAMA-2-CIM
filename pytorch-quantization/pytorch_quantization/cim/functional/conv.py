@@ -1,9 +1,13 @@
 import torch
 from torch.nn.functional import unfold
-from . import cim_sim
-from .cim_mapping import print_network_info
+from . import macro_sim
+from .mapping import print_network_info
 
-def cim_conv2d(cim_args, quant_input, scale_input, quant_weight, scale_weight, 
+__all__ = [
+    "conv2d"
+]
+
+def conv2d(cim_args, quant_input, scale_input, quant_weight, scale_weight, 
                bias=None, stride=(1,1), padding=(0,0), dilation=(1,1), groups=1):
     """
     Performs 2D convolution by converting it into a matrix multiplication where each column of the weight matrix represents a filter.
@@ -60,7 +64,7 @@ def cim_conv2d(cim_args, quant_input, scale_input, quant_weight, scale_weight,
     # torch.save(quant_input, 'quant_input.bin')
     # torch.save(quant_weight, 'quant_weight.bin')
 
-    output = cim_sim.simulate_array(cim_args, quant_input, quant_weight)
+    output = macro_sim.simulate_array(cim_args, quant_input, quant_weight)
 
     # save output
     # torch.save(output, 'correct_output.bin')

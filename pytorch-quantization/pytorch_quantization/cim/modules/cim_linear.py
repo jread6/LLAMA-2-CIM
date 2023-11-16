@@ -20,8 +20,7 @@
 from torch import nn
 from torch.nn import functional as F
 
-import cim
-from cim import tensor_quant
+from pytorch_quantization import tensor_quant
 
 from . import _utils
 
@@ -32,8 +31,8 @@ class CIMLinear(nn.Linear, _utils.QuantMixin):
 
     Apply quantized linear to the incoming data, y = dequant(quant(x)quant(A)^T + b).
 
-    Keep Module name "Linear" instead of "QuantLinear" so that it can be easily dropped into preexisting model and load
-    pretrained weights. An alias "QuantLinear" is defined below. The base code is a copy of nn.Linear, see detailed
+    Keep Module name "Linear" instead of "CIMLinear" so that it can be easily dropped into preexisting model and load
+    pretrained weights. An alias "CIMLinear" is defined below. The base code is a copy of nn.Linear, see detailed
     comment of original arguments there.
 
     Quantization descriptors are passed in in kwargs. If not presents, default_quant_desc_input and
@@ -68,19 +67,10 @@ class CIMLinear(nn.Linear, _utils.QuantMixin):
         self.init_quantizer(quant_desc_input, quant_desc_weight)
 
     def forward(self, input):
-        quant_input,  scale_input  = self._input_quantizer(input)
-        quant_weight, scale_weight = self._weight_quantizer(self.weight)
+        quant_input = self._input_quantizer(input)
+        quant_weight = self._weight_quantizer(self.weight)
 
-        # TODO: convert input and weight to integer
-        # quant_input = quant_input * scale_input
-        # quant_weight = quant_weight * scale_weight
-
-        # TODO: remove scaling from inside this function
-        output = cim.linear(quant_input, quant_weight, bias=self.bias)
-
-        # TODO: convert output to float
-        # scale = scale_input * scale_weight
-        # output = output / scale
+        output = F.linear(quant_input, quant_weight, bias=self.bias)
 
         return output
 

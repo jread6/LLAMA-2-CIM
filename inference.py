@@ -17,7 +17,7 @@ from dataset import get_imagenet
 # from torch.utils.data.dataloader import default_collate
 # from torchvision.transforms.functional import InterpolationMode
 import sys
-sys.path.append('pytorch-quantization/')
+# sys.path.append('pytorch-quantization/')
 
 import pytorch_quantization.quant_modules as quant_modules
 
