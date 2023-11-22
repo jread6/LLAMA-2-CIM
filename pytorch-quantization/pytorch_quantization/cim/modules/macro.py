@@ -1,6 +1,7 @@
 import torch    
 import math
 
+
 class CIM():
     def simulate_array(self, input2d, weight2d):
         # Shift inputs and weights so they are positive
@@ -53,7 +54,7 @@ class CIM():
                     out = torch.matmul(input[:, start_row:end_row].to(dtype=torch.float32), weight2d[start_row:end_row, :].to(dtype=torch.float32))
 
                     # quantize adc output
-                    out = self._adc_quantizers[part](out)
+                    out = self._adc_quant(out)
 
                 # add partition output to total output of the sub array
                 Psum += out
@@ -177,6 +178,44 @@ class CIM():
 
         return ADC_output
 
+    def _adc_quant(self, inputs):
+        """Apply ADC quantization on input tensor
+
+        Simply clip off any outputs larger than amax
+
+        Arguments:
+            input: in_features to quantize
+        Returns:
+            A tuple: (quant_in_feature, quant_weight)
+        """
+
+        if self._adc_quantizer._disabled:
+            return inputs
+        
+        outputs = inputs
+
+        if not self._adc_quantizer._if_calib:
+            # input_bits     = self._adc_quantizer.num_bits
+            # input_unsigned = self._adc_quantizer.unsigned
+            # amax     = self._adc_quantizer.amax
+
+            # input_max_bound = torch.tensor((2.0**(input_bits - 1 + int(input_unsigned))) - 1.0, device=inputs.device)
+            # scale = input_max_bound / input_amax
+            # outputs = outputs*scale     
+
+            # print(torch.sum(outputs - inputs))  
+
+            if self._cim_args.adc_precision == self._cim_args.ideal_adc_precision:
+                return outputs
+
+            out_max = 2**(self._cim_args.adc_precision-self._cim_args.adc_reduction)
+            outputs[inputs > out_max] = out_max
+
+        else:
+            outputs = self._adc_quantizer(inputs)
+        
+        return outputs
+
 def convert_to_n_ary(dec_matrix, base, bits=8, device='cuda'):
     # expand each column in the decimal matrix to an n-ary number
     rows, cols = dec_matrix.shape
@@ -190,3 +229,4 @@ def convert_to_n_ary(dec_matrix, base, bits=8, device='cuda'):
     out = dec_matrix // n_ary % base
 
     return out.reshape(rows, num_digits*cols)
+

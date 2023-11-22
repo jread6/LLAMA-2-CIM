@@ -10,7 +10,12 @@ import torch.nn as nn
 # import torchvision
 # import transforms
 from torchvision import models
+from pytorch_quantization import cim
+import pytorch_quantization.cim.modules.macro as macro
+
 from dataset import get_imagenet
+from collections import namedtuple
+
 # import vision.references.classification.utils as utils
 # from sampler import RASampler
 # from torch import nn
@@ -21,10 +26,35 @@ import sys
 
 import pytorch_quantization.quant_modules as quant_modules
 
-def main(model_name='resnet18'):
-    torch.cuda.set_device(0)
+# Definition of the named tuple that is used to store mapping of the quantized modules
+_quant_entry = namedtuple('quant_entry', 'orig_mod mod_name replace_mod')
 
-    quant_modules.initialize()
+# Global member of the file that contains the mapping of quantized modules
+cim_quant_map = [_quant_entry(torch.nn, "Conv2d", cim.CIMConv2d),]
+
+def main(model_name='resnet18'):
+    gpu = 0
+    batch_size = 128
+    HRS = 1000000
+    LRS = 1000
+    mem_values = torch.tensor([HRS, LRS], device=gpu)
+    torch.cuda.set_device(gpu)
+    torch.manual_seed(0)
+    
+    # initialize CIM simulation arguments
+    cim_args = cim.CIMArgs(inference=True, 
+                           batch_size=batch_size, 
+                           mem_values=mem_values,
+                           model_name=model_name,
+                           open_rows=128,
+                           adc_reduction=0,
+                           hardware=False, # turn hardware simulation off for quantization calibration
+                           quant_mode='adc',
+                           device=gpu)
+
+    # use custom quant modules for cim compatible layers
+    quant_modules.initialize(float_module_list=['Conv2d'], custom_quant_modules=cim_quant_map)
+    cim.CIMConv2d.set_default_cim_args(cim_args)
 
     if model_name == 'resnet18':
         model = models.resnet18()
@@ -35,15 +65,23 @@ def main(model_name='resnet18'):
 
     # some models have already been calibrated by James, they are stored in shimeng-srv2 at /usr/scratch1/datasets/
     # If you want to use a model not listed above, use calibrate.py to calibrate the model
-    print("Loading quantized model...")
-    model.load_state_dict(torch.load("/usr/scratch1/james/models/quant_"+model_name+"-calibrated.pth"))
-    print("Model loaded.")
+
+    try:
+        print("Loading quantized model...")
+        state_dict = torch.load("/usr/scratch1/james/models/cim_quant_"+model_name+".pth")
+        model.load_state_dict(state_dict)
+        print("Model loaded.")
+    except:
+        print("Quantized model not found, please quantize the model first.")
+        return
 
     model.cuda()
+    for name, module in model.named_modules():
+        if isinstance(module, macro.CIM):
+            print(f'{name} ADC precision: {module._cim_args.adc_precision}')
 
     data_path = '/usr/scratch1/datasets/imagenet/'
     num_iter = 1
-    batch_size = 500
 
     # use PyTorch's get_imagenet function
     data_loader_test = get_imagenet(batch_size, data_path, train=False, val=True)
@@ -80,7 +118,7 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, log_suffix="
                 print('Test Accuracy of the model on {} test images: {} %'.format(num_iter*images.shape[0], 100 * correct / total))
                 print('Average Test loss: {}'.format(total_loss))
 
-                return
+                return 100 * correct / total
 
         total_loss /= test_count
 

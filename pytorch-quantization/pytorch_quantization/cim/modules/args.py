@@ -8,7 +8,8 @@ class CIMArgs:
     def __init__(self, inference=False, batch_size=16,
                 mem_values=torch.tensor([float('inf'), 10000], device='cuda'), 
                 sub_array=[128,128], open_rows=128,
-                adc_precision=7, weight_precision=8,
+                adc_precision=7, 
+                weight_precision=8,
                 input_precision=8, conversion_type='TIA', vdd=1,
                 crossbar_type='resistive', res_divider=1000,
                 v_range=1, v_noise=0,
@@ -17,8 +18,7 @@ class CIMArgs:
                 R_parasistic=0, stress_time=0,
                 calc_BER=False, dummy_column=False,
                 debug=False, Rpdn=0, hardware=False,
-                analog_shift_add=False, quant_degree=1, num_refs=0,
-                quant_mode='iw',
+                analog_shift_add=False,
                 model_name='ResNet50', device='cuda'):
         """
         Initializes the CIM parameters.
@@ -65,12 +65,9 @@ class CIMArgs:
         self.debug = debug
         self.Rpdn = Rpdn
         self.analog_shift_add = analog_shift_add
-        self.quant_degree = quant_degree
-        self.num_refs = num_refs
         self.hardware = hardware
         self.model_name = model_name
         self.device = device
-        self.quant_mode = quant_mode
 
         # delete NetWork_xx_.csv file
         # if os.path.exists('NetWork_'+model_name+'.csv'):

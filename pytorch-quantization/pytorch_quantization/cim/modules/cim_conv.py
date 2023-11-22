@@ -28,8 +28,10 @@ import torch
 import math
 import torch.nn
 import torch.nn.functional as F
+from copy import deepcopy
 from torch.nn.modules.utils import _single, _pair, _triple
 from torch.nn.modules.conv import _ConvTransposeNd
+from pytorch_quantization.tensor_quant import QuantDescriptor
 
 from pytorch_quantization import tensor_quant
 import pytorch_quantization.cim.modules.macro as macro
@@ -81,11 +83,18 @@ class _CIMConvNd(torch.nn.modules.conv._ConvNd, macro.CIM, _cim_utils.QuantMixin
         super(_CIMConvNd, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation,
                                            transposed, output_padding, groups, bias, padding_mode)
 
-        self.init_cim(cim_args)
+        _cim_args = deepcopy(cim_args)
 
-        # calculate number of adc quantizers needed
-        num_adc_quantizers = math.ceil(self._cim_args.weight2d_shape[0] / self._cim_args.sub_array[0])
-        self.init_quantizer(quant_desc_input, quant_desc_weight, quant_desc_adc, num_adc_quantizers=num_adc_quantizers)
+        _cim_args.weight2d_shape = [kernel_size[0]*kernel_size[1]*in_channels, out_channels]
+        _cim_args.ideal_adc_precision = math.ceil(math.log2(min(_cim_args.open_rows, _cim_args.weight2d_shape[0])))
+        self.init_cim(_cim_args)
+
+        # allow for different adc quantization for different layers (per tile)
+        num_rows = min(self._cim_args.open_rows, self._cim_args.weight2d_shape[0])
+        ideal_precision = math.ceil(math.log2(num_rows))
+
+        adc_quant_desc = QuantDescriptor(calib_method='histogram', num_bits=ideal_precision, unsigned=True)
+        self.init_quantizer(quant_desc_input, quant_desc_weight, adc_quant_desc)
 
     def _quant(self, input):
         """Apply quantization on input and weight
@@ -102,7 +111,7 @@ class _CIMConvNd(torch.nn.modules.conv._ConvNd, macro.CIM, _cim_utils.QuantMixin
         quant_weight = self._weight_quantizer(self.weight)
 
         # after quantization of inputs and weights, convert fake quantized input and weight to integers
-        if self._cim_args.quant_mode == 'adc':
+        if self._cim_args.quant_mode is None or self._cim_args.quant_mode == 'adc':
             input_bits     = self.input_quantizer.num_bits
             input_unsigned = self.input_quantizer.unsigned
             input_amax     = self.input_quantizer.amax
@@ -122,6 +131,16 @@ class _CIMConvNd(torch.nn.modules.conv._ConvNd, macro.CIM, _cim_utils.QuantMixin
             quant_weight = quant_weight*scale
 
         return (quant_input, quant_weight)
+    
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        state = super(_CIMConvNd, self).state_dict(destination, prefix, keep_vars)
+        state[prefix + '_cim_args'] = self._cim_args
+        return state
+    
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        self._cim_args = state_dict[prefix + '_cim_args']
+        del state_dict[prefix + '_cim_args']
+        super(_CIMConvNd, self)._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
 class CIMConv2d(_CIMConvNd):
     """Quantized 2D conv"""
@@ -146,7 +165,6 @@ class CIMConv2d(_CIMConvNd):
         dilation = _pair(dilation)
 
         quant_desc_input, quant_desc_weight, quant_desc_adc, cim_args = _cim_utils.pop_quant_desc_in_kwargs(self.__class__, **kwargs)
-        cim_args.weight2d_shape = [kernel_size[0]*kernel_size[1]*in_channels, out_channels]
 
         super(CIMConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, False,
                                           _pair(0), groups, bias, padding_mode,
@@ -175,13 +193,15 @@ class CIMConv2d(_CIMConvNd):
     def conv2d(self, input, weight, bias, stride, padding, dilation, groups):
         """Forward function of CIMConv2d"""
 
-        # if we are still learning input and weight quantization, use the original convolution function
+        # if we are still calibrating input and weight quantization, use the original convolution function
         if self._cim_args.quant_mode == 'iw':
             return F.conv2d(input, weight, bias, stride, padding, dilation, groups)
         
         #TODO: support circular convolution
 
         # Unfold the input tensor into a 2D matrix
+        # TODO: Use Novel mapping method to reduce memory consumption
+        
         input_2d = F.unfold(input, kernel_size=weight.shape[-2:], dilation=dilation,
                                 padding=padding, stride=stride).transpose(1, 2).flatten(start_dim=0, end_dim=1)
         
