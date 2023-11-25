@@ -7,6 +7,7 @@ import warnings
 import torch
 import torch.utils.data
 import torch.nn as nn
+from tqdm import tqdm
 # import torchvision
 # import transforms
 from torchvision import models

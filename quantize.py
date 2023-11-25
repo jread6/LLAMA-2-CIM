@@ -41,7 +41,7 @@ from torch import nn
 from tqdm import tqdm
 from torchvision import models
 import math
-
+from copy import deepcopy
 # import cim
 # from cim.tensor_quant import QuantDescriptor
 # import cim_modules
@@ -89,47 +89,20 @@ def main(model_name='resnet18', dataset_name='imagenet'):
     batch_size = 128
     torch.cuda.set_device(gpu)
     torch.manual_seed(0)
+
+    # Step 1: Quantize inputs and weights to integers
+    quant_modules.initialize(custom_quant_modules=quant_map)
+
+    # Use unmodified TensorRT 
+    quant_desc = QuantDescriptor(calib_method='histogram', num_bits=8, unsigned=False)
+    quant_nn.QuantConv2d.set_default_quant_desc_input( quant_desc)
+    quant_nn.QuantConv2d.set_default_quant_desc_weight(quant_desc)
     
-    HRS = 1000000
-    LRS = 1000
-    mem_values = torch.tensor([HRS, LRS], device=gpu)
-    # initialize CIM simulation arguments
-    cim_args = cim.CIMArgs(inference=True, 
-                           batch_size=batch_size, 
-                           mem_values=mem_values,
-                           model_name=model_name,
-                           open_rows=128,
-                           adc_reduction=0,
-                           hardware=False, # turn hardware simulation off for quantization calibration
-                           device=gpu)
+    quant_nn.QuantLinear.set_default_quant_desc_input( quant_desc)
+    quant_nn.QuantLinear.set_default_quant_desc_weight(quant_desc)
 
-    # use custom quant modules for cim compatible layers
-    quant_modules.initialize(float_module_list=['Conv2d'], custom_quant_modules=cim_quant_map)
-
-    iw_kwargs  = {'fake_quant': True, 'unsigned': False} # need to use fake quant because true quant is not supported by TensorRT, disable learn_amax because it has already been learned
-    adc_kwargs = {'fake_quant': True, 'unsigned': True} 
-    iw_quant_desc  = QuantDescriptor(calib_method='histogram', num_bits=8, **iw_kwargs)
-    adc_quant_desc = QuantDescriptor(calib_method='histogram', **adc_kwargs)
-
-    cim.CIMConv2d.set_default_quant_desc_input(iw_quant_desc)
-    cim.CIMConv2d.set_default_quant_desc_weight(iw_quant_desc)
-    cim.CIMConv2d.set_default_quant_desc_adc(adc_quant_desc)
-    cim.CIMConv2d.set_default_cim_args(cim_args)
-
-    # TODO: support CIMLinear
-    # cim.CIMLinear.set_default_quant_desc_input(iw_quant_desc)
-    # cim.CIMLinear.set_default_quant_desc_weight(iw_quant_desc)
-    # cim.CIMLinear.set_default_quant_desc_adc(adc_quant_desc)
-    # cim.CIMLinear.set_default_cim_args(cim_args)
-
-
-    # quant_nn.QuantConv2d.set_default_quant_desc_input(quant_desc)
-    # quant_nn.QuantConv2d.set_default_quant_desc_weight(quant_desc)
-
-    # quant_nn.QuantLinear.set_default_quant_desc_input(quant_desc)
-    # quant_nn.QuantLinear.set_default_quant_desc_weight(quant_desc)
-    model_dir = '/usr/scratch1/james/models/'
-    data_path = '/usr/scratch1/datasets/imagenet/'
+    model_dir = '/usr/scratch1/james/models/'       #TODO: Replace with parsed argument
+    data_path = '/usr/scratch1/datasets/imagenet/'  #TODO: Replace with parsed argument
 
     if model_name == 'resnet18':
         model = models.resnet18(weights='ResNet18_Weights.DEFAULT')
@@ -139,82 +112,122 @@ def main(model_name='resnet18', dataset_name='imagenet'):
         model = models.swin_v2_t(weights='DEFAULT')
 
     model.cuda()
-    data_loader, data_loader_test = get_imagenet(batch_size, data_path, train=True, val=True, sample=False)
+    criterion = nn.CrossEntropyLoss()
+    data_loader, data_loader_test = get_imagenet(batch_size, data_path, train=True, val=True, sample=True)
+
+    baseline_accuracy = 0 # Initialize baseline accuracy
 
     try:
-        # load model
-        print("Loading input and weight quantized model...")
+        # load existing input and weight quantized model
+        print("Trying to load input and weight quantized model...")
         iw_quant_model = '/usr/scratch1/james/models/iw_quant_' + model_name + '.pth'
         model.load_state_dict(torch.load(iw_quant_model))
+        print("Model loaded.")
     except:
-        # step 1: quantize inputs and weights with TensorRT
         print("Quantizing inputs and weights...")
-        # Collect statistics
-        # It is a bit slow since we collect histograms on CPU
+        # Collect histograms of inputs and weights
         with torch.no_grad():
-            collect_stats(model, data_loader, num_batches=2, cim=False)
+            collect_stats(model, data_loader, num_batches=8)
             strict = True
             if model_name == 'swin_t':
                 strict = False
-            compute_amax(model, quant='iw', method="percentile", percentile=99.99, strict=strict)
+            compute_amax(model, method="percentile", percentile=99.99, strict=strict)
 
-    num_iter=1
-
-    criterion = nn.CrossEntropyLoss()
     with torch.no_grad():
-        print('Evaluating iw quantized model...')
-        baseline_accuracy = evaluate(model, criterion, data_loader_test, device=gpu, num_iter=num_iter, print_freq=1)
+        print('Evaluating input and weight quantized model...')
+        baseline_accuracy = evaluate(model, criterion, data_loader_test, device=gpu, num_iter=8, print_freq=1)
 
-        # Save the model
-        calibrated_model = model_dir + '/iw_quant_' + model_name + '.pth'
-        torch.save(model.state_dict(), calibrated_model)
+    # Save the model
+    calibrated_model = model_dir + '/iw_quant_' + model_name + '.pth'
+    torch.save(model.state_dict(), calibrated_model)
 
+    # save state dict
+    iw_state_dict = deepcopy(model.state_dict()) #TODO: test if we need to deep copy
+    del model
 
-        # create a list of all layers
-        layers = []
-        for name, module in model.named_modules():
-            if isinstance(module, macro.CIM):
-                layers.append(name+'._adc_quantizer')
-                module._cim_args.quant_mode = 'adc'
+    # Step 2: Quantize ADC outputs with TensorRT
+    # Set up CIM simulation arguments
+    HRS = 1000000
+    LRS = 1000
+    mem_values = torch.tensor([HRS, LRS], device=gpu)
 
-        # pick which layers to quantize the adc outputs
-        layer_quant = layers
-        # layer_quant = [layers[3], layers[4]]
-        # layer_quant = [layers[4]]
-        # TODO: log all layers and their ideal adc_precision
+    cim_args = cim.CIMArgs(inference=True, 
+                           batch_size=batch_size, 
+                           mem_values=mem_values,
+                           model_name=model_name,
+                           open_rows=128,
+                           hardware=False, # turn hardware simulation off for quantization calibration
+                           device=gpu)
 
-        try:
-            # load model
-            print("Loading adc quantized model...")
-            adc_quant_model = model_dir + '/cim_quant_' + model_name + '.pth'
-            model.load_state_dict(torch.load(adc_quant_model))
-        except:
-            # step 2: quantize adc outputs with TensorRT
-            print("Gathering ADC output histograms...")
-            # Collect statistics
-            # It is a bit slow since we collect histograms on CPU
+    # Replaced TensorRT quant modules with custom quant modules for cim compatible layers
+    quant_modules.deactivate()
+    quant_modules.initialize(float_module_list=['Conv2d'], custom_quant_modules=cim_quant_map)
 
-            collect_stats(model, data_loader, num_batches=2, quant_mode='adc', layer_quant=layer_quant)
+    adc_quant_desc = QuantDescriptor(calib_method='histogram', unsigned=True)
+
+    # TODO: support CIMLinear
+    # cim.CIMLinear.set_default_quant_desc_adc(adc_quant_desc)
+    cim.CIMConv2d.set_default_quant_desc_input( quant_desc)
+    cim.CIMConv2d.set_default_quant_desc_weight(quant_desc)
+    cim.CIMConv2d.set_default_quant_desc_adc(adc_quant_desc)
+    cim.CIMConv2d.set_default_cim_args(cim_args)
+
+    # load model
+    if model_name == 'resnet18':
+        model = models.resnet18(weights='ResNet18_Weights.DEFAULT')
+    elif model_name == 'resnet50':
+        model = models.resnet50(weights='ResNet50_Weights.DEFAULT')
+    elif model_name == 'swin_t':
+        model = models.swin_v2_t(weights='DEFAULT')
+
+    model.load_state_dict(iw_state_dict)    
+    model.cuda()
+
+    # Create a list of all layers mapped to CIM
+    layers = []
+    for name, module in model.named_modules():
+        if isinstance(module, macro.CIM):
+            layers.append(name+'._adc_quantizer')
+            module._cim_args.quant_mode = 'adc'
+
+    # Pick which layers (tiles) to quantize the ADC outputs of
+    layer_quant = layers
+    # Layer_quant = [layers[3], layers[4]]
+
+    try:
+        # load ADC quantized model
+        print("Trying to load ADC quantized model...")
+        adc_quant_model = model_dir + '/cim_quant_' + model_name + '.pth'
+        adc_state_dict = torch.load(adc_quant_model)
+        model.load_state_dict(adc_state_dict)
+        print("Model loaded.")
+    except:
+        print("Model not found. Gathering ADC output histograms...")
+        # Collect histograms for each tile
+        with torch.no_grad():
+            collect_stats(model, data_loader, num_batches=8, quant_mode='adc')
             strict = True
             if model_name == 'swin_t':
                 strict = False
             compute_amax(model, quant_mode='adc', layer_quant=layer_quant, method="percentile", percentile=99.99, strict=strict)
 
-        calibrated_model = model_dir + '/cim_quant_' + model_name + '.pth'
-        torch.save(model.state_dict(), calibrated_model)
 
+    with torch.no_grad():
         print("Optimizing ADC precision for each layer...")
         optimize_adc_precision(model, data_loader_test, layer_quant, baseline_accuracy, device=gpu) 
 
-    print(model.state_dict().keys())
+        print('Evaluating ADC quantized model...')
+        baseline_accuracy = evaluate(model, criterion, data_loader_test, device=gpu, num_iter=8, print_freq=1)
+
     calibrated_model = model_dir + '/cim_quant_' + model_name + '.pth'
     torch.save(model.state_dict(), calibrated_model)
 
+    # TODO: Log ADC precision for each layer
     for name, module in model.named_modules():
-        if isinstance(module, cim.CIMConv2d):
+        if isinstance(module, macro.CIM):
             print(f'{name} ADC precision: {module._cim_args.adc_precision}')
 
-def collect_stats(model, data_loader, num_batches, quant_mode='iw', layer_quant=[1]):
+def collect_stats(model, data_loader, num_batches, quant_mode='iw'):
     """Feed data to the network and collect statistic"""
 
     # Enable calibrators
@@ -244,7 +257,6 @@ def collect_stats(model, data_loader, num_batches, quant_mode='iw', layer_quant=
                 module.enable()
 
 def compute_amax(model, quant_mode='iw', layer_quant=[], **kwargs):
-    amax = 0
     # Load calib result
     for name, module in model.named_modules():
         if isinstance(module, quant_nn.TensorQuantizer):
@@ -263,20 +275,12 @@ def compute_amax(model, quant_mode='iw', layer_quant=[], **kwargs):
                         module.load_calib_amax(**kwargs)
 
                     # plot_hist(name=name, calib=module._calibrator, percentile=99.99)
-                    print(F"{name:40}: {module}")
-
-
-        # if isinstance(module, macro.CIM):
-            # turn off calibration mode
-            # module._cim_args.quant_mode = None
-        #     #TODO: log adc precision for this layer
-        #     module._cim_args.adc_precision = math.ceil(math.log2(amax))
-            
+                    print(F"{name:40}: {module}")       
     model.cuda()
 
 def optimize_adc_precision(model, data_loader_test, layer_quant, baseline_accuracy, accuracy_tolerance=3.5, device=0):
 
-    num_iter=1
+    num_iter=8
 
     # disable all adc quantizers
     for name, module in model.named_modules():
@@ -294,15 +298,15 @@ def optimize_adc_precision(model, data_loader_test, layer_quant, baseline_accura
                 module._adc_quantizer.enable()             
                 accuracy = 0
                 amax = module._adc_quantizer.amax
-                adc_precision = math.ceil(math.log2(amax)) - 1
+                adc_precision = math.ceil(math.log2(amax)) - 1  #Try reducing ADC precision below amax
                 while accuracy < baseline_accuracy - accuracy_tolerance and adc_precision <= module._cim_args.ideal_adc_precision:
                     
+                    # Update  ADC precision for this layer
                     module._cim_args.adc_precision = adc_precision
 
                     criterion = nn.CrossEntropyLoss()
-                    with torch.no_grad():
-                        print(f'\nTesting {name} (amax: {amax}) with {adc_precision}b adc precision...')
-                        accuracy = evaluate(model, criterion, data_loader_test, device=device, num_iter=num_iter, print_freq=1)
+                    print(f'\nTesting {name} (amax: {amax}) with {adc_precision}b adc precision...')
+                    accuracy = evaluate(model, criterion, data_loader_test, device=device, num_iter=num_iter, print_freq=1)
 
                     adc_precision += 1
             

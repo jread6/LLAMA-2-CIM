@@ -208,7 +208,7 @@ class CIM():
             if self._cim_args.adc_precision == self._cim_args.ideal_adc_precision:
                 return outputs
 
-            out_max = 2**(self._cim_args.adc_precision-self._cim_args.adc_reduction)
+            out_max = 2**self._cim_args.adc_precision
             outputs[inputs > out_max] = out_max
 
         else:

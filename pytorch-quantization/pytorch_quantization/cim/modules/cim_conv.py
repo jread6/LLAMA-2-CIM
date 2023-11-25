@@ -138,8 +138,10 @@ class _CIMConvNd(torch.nn.modules.conv._ConvNd, macro.CIM, _cim_utils.QuantMixin
         return state
     
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
-        self._cim_args = state_dict[prefix + '_cim_args']
-        del state_dict[prefix + '_cim_args']
+        dst_has_cim = prefix + '_cim_args' in state_dict
+        if dst_has_cim:
+            self._cim_args = state_dict[prefix + '_cim_args']
+            del state_dict[prefix + '_cim_args']
         super(_CIMConvNd, self)._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
 class CIMConv2d(_CIMConvNd):

@@ -114,6 +114,9 @@ class QuantModuleReplacementHelper():
         for entry in self.orginal_func_map:
             setattr(entry.orig_mod, entry.mod_name, entry.replace_mod)
 
+        # remove the entries from quant_map
+        self.quant_map.clear()
+
 def initialize(float_module_list=None, custom_quant_modules=None):
     """Dynamic module replacement using monkey patching.
 

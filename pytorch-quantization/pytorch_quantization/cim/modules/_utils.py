@@ -84,13 +84,8 @@ class QuantMixin():
         
         # NOTE: THIS DOES NOT SUPPORT MLC YET
         # calculate voltage references
-        if cim_args.num_refs == 0:
-            num_refs = (2**cim_args.adc_precision)
-            x = torch.arange(num_refs, device=cim_args.device) + 1
-        else:
-            x = torch.arange(cim_args.num_refs, device=cim_args.device) + 1
-
-        x = x*cim_args.quant_degree # to quantize ADC, doesn't work well, suggest to keep quant_degree=1
+        num_refs = (2**cim_args.adc_precision)
+        x = torch.arange(num_refs, device=cim_args.device) + 1
 
         # # subtract IR drop for this ADC block
         # vdd = cim_args.vdd - cim_args.logic_IR_drop

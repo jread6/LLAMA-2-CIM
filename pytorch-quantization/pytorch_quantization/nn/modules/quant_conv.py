@@ -129,9 +129,6 @@ class QuantConv2d(_QuantConvNd):
         else:
             output = F.conv2d(quant_input, quant_weight, self.bias, self.stride, self.padding, self.dilation,
                               self.groups)
-            
-            print(input)
-            print(output)
 
         return output
 
