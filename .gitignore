@@ -2,3 +2,5 @@ layer_record*
 *.pt
 *.pth
 *.png
+.vscode*
+lm_cache*
