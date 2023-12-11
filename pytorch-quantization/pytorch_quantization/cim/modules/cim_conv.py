@@ -86,6 +86,8 @@ class _CIMConvNd(torch.nn.modules.conv._ConvNd, macro.CIM, _cim_utils.QuantMixin
         _cim_args = deepcopy(cim_args)
 
         _cim_args.weight2d_shape = [kernel_size[0]*kernel_size[1]*in_channels, out_channels]
+        if _cim_args.open_rows is None:
+            _cim_args.open_rows = _cim_args.weight2d_shape[0]
         _cim_args.ideal_adc_precision = math.ceil(math.log2(min(_cim_args.open_rows, _cim_args.weight2d_shape[0])))
         self.init_cim(_cim_args)
 
@@ -224,14 +226,16 @@ class CIMConv2d(_CIMConvNd):
         W_out = (input.shape[-1] + 2 * self.padding[1] - self.dilation[1] * (weight.shape[-1] - 1) - 1) // self.stride[1] + 1
         output = output.view(N, H_out, W_out, C_out).permute(0, 3, 1, 2)
 
+        # de-quantize integer outputs back to floating point
+        scale = self.input_scale * self.weight_scale
+
+        output = output/scale
+
         # Add bias if provided
         if bias is not None:
             output += bias.view(1, -1, 1, 1)
 
-        # de-quantize integer outputs back to floating point
-        scale = self.weight_scale * self.input_scale
-
-        return output/scale
+        return output
 
 
 # Define alias with Quant prefix

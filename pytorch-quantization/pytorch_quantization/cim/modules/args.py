@@ -6,8 +6,8 @@ __all__ = ["CIMArgs"]
 # global CIM arguments that can be set by the user
 class CIMArgs:
     def __init__(self, inference=False, batch_size=16,
-                mem_values=torch.tensor([float('inf'), 10000], device='cuda'), 
-                sub_array=[128,128], open_rows=128,
+                mem_values=torch.tensor([float('inf'), 10000]), 
+                sub_array=[128,128], open_rows=None,
                 adc_precision=7, 
                 weight_precision=8,
                 input_precision=8, conversion_type='TIA', vdd=1,
@@ -18,8 +18,13 @@ class CIMArgs:
                 R_parasistic=0, stress_time=0,
                 calc_BER=False, dummy_column=False,
                 debug=False, Rpdn=0, hardware=False,
-                analog_shift_add=False,
-                model_name='ResNet50', device='cuda'):
+                analog_shift_add=False, device='cuda',
+                quant_mode='iw',
+                adc_calib_method='max',
+                adc_quant_method='scale',
+                adc_optim = False,
+                adc_enable = True,
+                model_name='ResNet50'):
         """
         Initializes the CIM parameters.
 
@@ -68,6 +73,11 @@ class CIMArgs:
         self.hardware = hardware
         self.model_name = model_name
         self.device = device
+        self.quant_mode = quant_mode
+        self.adc_calib_method = adc_calib_method
+        self.adc_quant_method = adc_quant_method
+        self.adc_optim = adc_optim
+        self.adc_enable = adc_enable
 
         # delete NetWork_xx_.csv file
         # if os.path.exists('NetWork_'+model_name+'.csv'):

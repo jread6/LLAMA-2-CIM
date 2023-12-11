@@ -250,7 +250,7 @@ class FakeTensorQuantFunction(Function):
             outputs, scale = _tensor_quant(inputs, amax, num_bits, unsigned, narrow_range)
             return outputs / scale.to(inputs.dtype)
 
-        if not inputs.is_cuda:
+        if True: #if not inputs.is_cuda:    # Disable CPU path for now
             outputs = legacy_quant_func()
         else:
             try:
@@ -378,13 +378,14 @@ def _tensor_quant(inputs, amax, num_bits=8, unsigned=False, narrow_range=True):
     if min_amax < 0:
         raise ValueError("Negative values in amax")
 
-    max_bound = torch.tensor((2.0**(num_bits - 1 + int(unsigned))) - 1.0, device=amax.device)
+    max_bound = torch.tensor((2.0**(num_bits - 1 + int(unsigned))) - 1.0, device=inputs.device)
     if unsigned:
         min_bound = 0
     elif narrow_range:
         min_bound = -max_bound
     else:
         min_bound = -max_bound - 1
+    amax = amax.to(inputs.device)
     scale = max_bound / amax
 
     epsilon = 1. / (1<<24)

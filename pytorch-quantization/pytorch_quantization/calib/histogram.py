@@ -110,7 +110,11 @@ class HistogramCalibrator(_Calibrator):
                     self._calib_bin_edges = torch.linspace(0, x_max, self._num_bins + 1)
                 else:
                     if x_max > self._calib_bin_edges[-1]:
-                        width = self._calib_bin_edges[1] - self._calib_bin_edges[0]
+                        if self._calib_bin_edges[-1] == 0:
+                            # If the last bin edge is 0, we can't use it to compute width
+                            width = x_max / self._num_bins
+                        else:
+                            width = self._calib_bin_edges[1] - self._calib_bin_edges[0]
                         self._num_bins = int((x_max / width).ceil().item())
                         self._calib_bin_edges = torch.arange(0, x_max + width, width, device=x.device)
 

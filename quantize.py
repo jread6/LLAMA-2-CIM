@@ -64,7 +64,8 @@ from plot_hist import plot_hist
 _quant_entry = namedtuple('quant_entry', 'orig_mod mod_name replace_mod')
 
 # Global member of the file that contains the mapping of quantized modules
-cim_quant_map = [_quant_entry(torch.nn, "Conv2d", cim.CIMConv2d),]
+cim_quant_map = [_quant_entry(torch.nn, "Conv2d", cim.CIMConv2d),
+                 _quant_entry(torch.nn, "Linear", cim.CIMLinear),]
 
 
 # Global member of the file that contains the mapping of quantized modules
@@ -161,7 +162,7 @@ def main(model_name='resnet18', dataset_name='imagenet'):
 
     # Replaced TensorRT quant modules with custom quant modules for cim compatible layers
     quant_modules.deactivate()
-    quant_modules.initialize(float_module_list=['Conv2d'], custom_quant_modules=cim_quant_map)
+    quant_modules.initialize(float_module_list=['Conv2d', 'Linear'], custom_quant_modules=cim_quant_map)
 
     adc_quant_desc = QuantDescriptor(calib_method='histogram', unsigned=True)
 
@@ -171,6 +172,11 @@ def main(model_name='resnet18', dataset_name='imagenet'):
     cim.CIMConv2d.set_default_quant_desc_weight(quant_desc)
     cim.CIMConv2d.set_default_quant_desc_adc(adc_quant_desc)
     cim.CIMConv2d.set_default_cim_args(cim_args)
+
+    cim.CIMLinear.set_default_quant_desc_input( quant_desc)
+    cim.CIMLinear.set_default_quant_desc_weight(quant_desc)
+    cim.CIMLinear.set_default_quant_desc_adc(adc_quant_desc)    
+    cim.CIMLinear.set_default_cim_args(cim_args)
 
     # load model
     if model_name == 'resnet18':

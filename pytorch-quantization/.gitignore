@@ -43,6 +43,12 @@ compile_commands.json
 docs/source/scripts/activation_images/
 
 ## General
+.vscode/
+lm_cache/
+
+# Images
+*.jpg
+*.png
 
 # Compiled Object files
 *.slo

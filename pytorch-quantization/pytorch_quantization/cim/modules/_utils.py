@@ -25,6 +25,7 @@ from absl import logging
 import torch
 from torch import nn
 import math
+from copy import deepcopy
 
 from pytorch_quantization.nn import TensorQuantizer
 from pytorch_quantization.tensor_quant import QuantDescriptor, QUANT_DESC_8BIT_PER_TENSOR
@@ -78,44 +79,50 @@ class QuantMixin():
             raise ValueError("{} is not an instance of CIMArgs!")
         cls.default_cim_args = copy.deepcopy(value)  
 
-    def init_cim(self, cim_args):
+    def init_cim(self, cim_args, in_features, out_features):
         if not inspect.stack()[1].function == "__init__":
             raise TypeError("{} should be only called by __init__ of quantized module.".format(__name__))
         
+        # TODO: Update CIMArgs to be a new class called CIM that where we construct cim_args from a cim_descriptor
+        self._cim_args = deepcopy(cim_args)
+        
+        self._cim_args.weight2d_shape = [in_features, out_features]
+        if self._cim_args.open_rows is None:
+            self._cim_args.open_rows = self._cim_args.weight2d_shape[0]
+        
         # NOTE: THIS DOES NOT SUPPORT MLC YET
         # calculate voltage references
-        num_refs = (2**cim_args.adc_precision)
-        x = torch.arange(num_refs, device=cim_args.device) + 1
+        num_refs = (2**self._cim_args.adc_precision)
+        x = torch.arange(num_refs) + 1
 
         # # subtract IR drop for this ADC block
-        # vdd = cim_args.vdd - cim_args.logic_IR_drop
+        # vdd = self._cim_args.vdd - self._cim_args.logic_IR_drop
 
-        vdd = cim_args.vdd
-        LRS = cim_args.mem_values[-1]
-        HRS = cim_args.mem_values[0]
+        vdd = self._cim_args.vdd
+        LRS = self._cim_args.mem_values[-1]
+        HRS = self._cim_args.mem_values[0]
 
         r_max = 1/(x/LRS)
-        r_min = 1/((cim_args.open_rows-(x-1))/HRS + (x-1)/LRS)
+        r_min = 1/((self._cim_args.open_rows-(x-1))/HRS + (x-1)/LRS)
 
-        if cim_args.conversion_type == 'PU':
+        if self._cim_args.conversion_type == 'PU':
             print("ERROR: PU conversion type not supported yet")
-            v_max = vdd*(r_max/(cim_args.res_divider + r_max))
-            v_min = vdd*(r_min/(cim_args.res_divider + r_min))
+            v_max = vdd*(r_max/(self._cim_args.res_divider + r_max))
+            v_min = vdd*(r_min/(self._cim_args.res_divider + r_min))
             exit(1)
 
-        elif cim_args.conversion_type == 'TIA':
-            cim_args.Rf = LRS/cim_args.open_rows
-            v_max = vdd*(cim_args.Rf/(r_min))
-            v_min = vdd*(cim_args.Rf/(r_max))
+        elif self._cim_args.conversion_type == 'TIA':
+            self._cim_args.Rf = LRS/self._cim_args.open_rows
+            v_max = vdd*(self._cim_args.Rf/(r_min))
+            v_min = vdd*(self._cim_args.Rf/(r_max))
 
         ###################################################################
-        # v_max = torch.cat((torch.tensor([vdd], device=cim_args.device), v_max), 0)
+        # v_max = torch.cat((torch.tensor([vdd], device=self._cim_args.device), v_max), 0)
 
-        # cim_args.v_ref = (v_min[:-1]+v_max[1:])/2
-        cim_args.v_ref = (v_min+v_max)/2
+        # self._cim_args.v_ref = (v_min[:-1]+v_max[1:])/2
+        self._cim_args.v_ref = (v_min+v_max)/2
         ###################################################################
 
-        self._cim_args = cim_args
 
     def init_quantizer(self, quant_desc_input, quant_desc_weight, quant_desc_adc, num_layers=None, num_adc_quantizers=None):
         """Helper function for __init__ of quantized module

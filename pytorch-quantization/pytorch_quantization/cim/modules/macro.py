@@ -16,68 +16,99 @@ class CIM():
         # Add a dummy column to the weight matrix
         weight2d = torch.cat((weight2d, torch.full((weight2d.shape[0],1), fill_value=shift_weight, device=weight2d.device)), dim=1)
 
-        # Perform matrix multiplication on CIM crossbar
-        input2d = input2d.to(torch.int32)     # THIS PART HAS SOME LOSS
-        weight2d = weight2d.to(torch.int32)   # THIS PART HAS SOME LOSS
-
-        # convert the integer weights to n_ary representation
-        weight2d = convert_to_n_ary(weight2d, base=len(self._cim_args.mem_values), bits=self._cim_args.weight_precision, device=self._cim_args.device)
-       
-        # convert weights to eNVM cell values if running hardware simulation
-        if self._cim_args.hardware:
-            weight2d = self.convert_weights(weight2d)   
-
         # divide the weight matrix into partitions
         num_partitions = math.ceil(weight2d.shape[0]/self._cim_args.open_rows) 
-        ADC_out = torch.zeros((input2d.shape[0], weight2d.shape[1]), device=self._cim_args.device)
+        num_zeros = num_partitions*self._cim_args.open_rows - weight2d.shape[0]
+
+        # pad input and weight if necessary
+        if num_zeros > 0:
+            input2d  = torch.cat((input2d, torch.zeros((input2d.shape[0], num_zeros), device=input2d.device)), dim=1)
+            weight2d = torch.cat((weight2d, torch.zeros((num_zeros, weight2d.shape[1]), device=weight2d.device)), dim=0)
+        
+        # reshape input and weight matrices according to partitions
+        input2d  = input2d.reshape(input2d.shape[0], num_partitions, -1).transpose(0,1)
+        weight2d = weight2d.reshape(num_partitions, -1, weight2d.shape[1])
+    
+        input2d  = input2d.to(torch.int32)    # THIS PART HAS SOME LOSS
+        weight2d = weight2d.to(torch.int32)   # THIS PART HAS SOME LOSS 
+
+        # convert weights to eNVM cell values if running hardware simulation
+        if self._cim_args.hardware:
+            # convert the integer weights to n_ary representation
+            # weight2d = convert_to_n_ary(weight2d, base=len(self._cim_args.mem_values), bits=self._cim_args.weight_precision)
+            weight2d = self.convert_weights(weight2d)   
+
+        ADC_out = torch.zeros((input2d.shape[1], weight2d.shape[2]), device=input2d.device)
         Psum = torch.zeros_like(ADC_out)
 
         # calculate outputs for each bit of the input
         for i in range(self._cim_args.input_precision):
-            mask = 2**i
-            input = (input2d & mask) >> i
+            input_scale = 2**i
+            input = (input2d & input_scale) >> i
 
-            # calculate partial sum for each partition
-            # TODO: do this loop in parallel
             Psum[:,:] = 0
+            # calculate outputs for each bit of the weight
+            for j in range(self._cim_args.weight_precision):
+                weight_scale = 2**j
+                weight = (weight2d & weight_scale) >> j
 
-            for part in range(num_partitions):  
-
-                start_row = part*self._cim_args.open_rows
-                end_row   = start_row + self._cim_args.open_rows
+                # calculate partial sum for each partition
+                # TODO: do this loop in parallel
 
                 if self._cim_args.hardware:
-                    # simulate analog MAC and ADC operation
-                    out = self.ADC_output(input[:, start_row:end_row], weight2d[start_row:end_row, :])
-
+                    return -1
                 else:
-                    out = torch.matmul(input[:, start_row:end_row].to(dtype=torch.float32), weight2d[start_row:end_row, :].to(dtype=torch.float32))
+                    out = torch.matmul(input.to(dtype=torch.float32), weight.to(dtype=torch.float32))
 
-                    # quantize adc output
-                    out = self._adc_quant(out)
+                out = self._adc_quant(out)
+                
+                # add output for each partition of crossbar rows
+                out = out.sum(dim=0)
 
-                # add partition output to total output of the sub array
+                ############### OLD METHOD ##################
+                # for part in range(num_partitions):  
+
+                #     start_row = part*self._cim_args.open_rows
+                #     end_row   = start_row + self._cim_args.open_rows
+
+                #     if self._cim_args.hardware:
+                #         # simulate analog MAC and ADC operation
+                #         out = self.ADC_output(input[:, start_row:end_row], weight[start_row:end_row, :])
+
+                #     else:
+                #         out = torch.matmul(input[:, start_row:end_row].to(dtype=torch.float32), weight[start_row:end_row, :].to(dtype=torch.float32))
+
+                #     # quantize adc output
+                #     out = self._adc_quant(out)
+
+                #     # add partition output to total output of the sub array
+                #     Psum += out
+
+                # scale adc output by the weight bit significance
+                out *= weight_scale
+
+                # add partial sums together
                 Psum += out
 
             # scale partial sum for input bit significance
-            Psum *= mask
+            Psum *= input_scale
 
             # add partition output to total output of the sub array
             ADC_out += Psum
 
-        max_val = 2**self._cim_args.weight_precision
-        base = len(self._cim_args.mem_values)
-        cols_per_weight = math.ceil(math.log(max_val, base))
-        weights_mask = base**torch.arange(cols_per_weight, device=self._cim_args.device).flip(0)
+        # max_val = 2**self._cim_args.weight_precision
+        # base = len(self._cim_args.mem_values)
+        # cols_per_weight = math.ceil(math.log(max_val, base))
+        # weights_mask = base**torch.arange(cols_per_weight, device=input2d.device).flip(0)
 
-        # split output into groups of each dot product
-        ADC_out = ADC_out.reshape(ADC_out.shape[0], int(ADC_out.shape[1]/cols_per_weight), cols_per_weight)
+        # # split output into groups of each dot product
+        # ADC_out = ADC_out.reshape(ADC_out.shape[0], int(ADC_out.shape[1]/cols_per_weight), cols_per_weight)
 
-        # multiply each dot product by the weight mask
-        ADC_out *= weights_mask
+        # # multiply each dot product by the weight mask
+        # ADC_out *= weights_mask
 
-        # add output bits together and accumulate total output
-        ADC_out = ADC_out.sum(dim=-1)
+        # # add output bits together and accumulate total output
+        # ADC_out = ADC_out.sum(dim=-1)
 
         out_dummy_row = ADC_out[-1,:-1].unsqueeze(0) # extract dummy row
         out_dummy_col = ADC_out[:-1,-1].unsqueeze(1) # extract dummy column
@@ -140,7 +171,7 @@ class CIM():
             BL_voltages = torch.div(vdd, 1 + torch.mul(equiv_cond, (self._cim_args.res_divider + self._cim_args.Rpdn)))
 
         if self._cim_args.v_noise > 0:
-            noise = torch.normal(mean=0.0, std=self._cim_args.v_noise, size=BL_voltages.shape, device=self._cim_args.device)
+            noise = torch.normal(mean=0.0, std=self._cim_args.v_noise, size=BL_voltages.shape, device=inputs.device)
 
             # add to BL voltages depending on std of nosie
             BL_voltages += noise
@@ -152,7 +183,7 @@ class CIM():
             max_val = 2**self._cim_args.weight_precision
             base = len(self._cim_args.mem_values)
             cols_per_weight = math.ceil(math.log(max_val, base))
-            weights_mask = base**torch.arange(cols_per_weight, device=self._cim_args.device).flip(0)
+            weights_mask = base**torch.arange(cols_per_weight, device=inputs.device).flip(0)
 
             # split output into groups of each dot product
             BL_voltages = BL_voltages.reshape(BL_voltages.shape[0], int(BL_voltages.shape[1]/cols_per_weight), cols_per_weight)
@@ -167,7 +198,7 @@ class CIM():
 
     def sense_voltage(self, BL_voltages):
 
-        num_refs = 2**self._cim_args.adc_precision
+        num_refs = 2**self._adc_quantizer.num_bits
         BL_voltages = BL_voltages.contiguous()
 
         if self._cim_args.conversion_type == 'PU':
@@ -189,34 +220,25 @@ class CIM():
             A tuple: (quant_in_feature, quant_weight)
         """
 
-        if self._adc_quantizer._disabled:
-            return inputs
-        
-        outputs = inputs
+        # TODO: integer outputs from ADC must be scaled. 
+        # Perhaps we need to convert outputs to integers after scaling
+        # to be more accurate
+        outputs = self._adc_quantizer(inputs)
 
-        if not self._adc_quantizer._if_calib:
-            # input_bits     = self._adc_quantizer.num_bits
-            # input_unsigned = self._adc_quantizer.unsigned
-            # amax     = self._adc_quantizer.amax
+        if not self._adc_quantizer._if_calib and not self._adc_quantizer._disabled:
+            if self._cim_args.adc_quant_method == 'clip':
+                outputs = inputs.clone()
 
-            # input_max_bound = torch.tensor((2.0**(input_bits - 1 + int(input_unsigned))) - 1.0, device=inputs.device)
-            # scale = input_max_bound / input_amax
-            # outputs = outputs*scale     
+                # clip outputs to out_max
+                out_max = 2**self._adc_quantizer.num_bits - 1
+                outputs[inputs > out_max] = out_max 
 
-            # print(torch.sum(outputs - inputs))  
+            elif self._cim_args.adc_quant_method == 'scale':
+                outputs = torch.round(outputs)
 
-            if self._cim_args.adc_precision == self._cim_args.ideal_adc_precision:
-                return outputs
-
-            out_max = 2**self._cim_args.adc_precision
-            outputs[inputs > out_max] = out_max
-
-        else:
-            outputs = self._adc_quantizer(inputs)
-        
         return outputs
 
-def convert_to_n_ary(dec_matrix, base, bits=8, device='cuda'):
+def convert_to_n_ary(dec_matrix, base, bits=8):
     # expand each column in the decimal matrix to an n-ary number
     rows, cols = dec_matrix.shape
     dec_matrix = dec_matrix.flatten().reshape(-1,1).int()
@@ -224,7 +246,7 @@ def convert_to_n_ary(dec_matrix, base, bits=8, device='cuda'):
     max_val = 2**bits
     num_digits = math.ceil(math.log(max_val, base))
 
-    n_ary = base**torch.arange(num_digits, device=device).flip(0)
+    n_ary = base**torch.arange(num_digits, device=dec_matrix.device).flip(0)
 
     out = dec_matrix // n_ary % base
 
